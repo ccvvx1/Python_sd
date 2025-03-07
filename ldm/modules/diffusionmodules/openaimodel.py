@@ -681,95 +681,243 @@ class UNetModel(nn.Module):
 
 
 
-        self.input_blocks = nn.ModuleList(
-            [
-                TimestepEmbedSequential(
-                    conv_nd(dims, in_channels, model_channels, 3, padding=1)
-                )
-            ]
-        )
+    # def ok432432():
+        print("\n" + "="*50)
+        print("[UNet编码器初始化] 开始构建输入块结构")
+        print("="*50)
+        
+        # 初始化输入块
+        print("\n[输入块] 创建初始卷积层：")
+        print(f"▷ 输入维度: {in_channels} → 输出维度: {model_channels}")
+        print(f"▷ 卷积类型: {dims}D卷积 | 核尺寸: 3x3 | 填充: 1")
+        input_conv = conv_nd(dims, in_channels, model_channels, 3, padding=1)
+        self.input_blocks = nn.ModuleList([
+            TimestepEmbedSequential(input_conv)
+        ])
+        print(f"✓ 初始输入块构建完成 | 模块结构：{self.input_blocks[-1]}")
+
+        # 初始化特征跟踪参数
+        print("\n[参数初始化] 设置跟踪变量：")
         self._feature_size = model_channels
         input_block_chans = [model_channels]
         ch = model_channels
         ds = 1
+        print(f"│ 当前特征尺寸: {self._feature_size}")
+        print(f"│ 通道数序列: {input_block_chans}")
+        print(f"│ 当前通道数(ch): {ch}")
+        print(f"└─ 初始下采样率(ds): {ds}x")
+
+        print("\n" + "="*50)
+        print("[层级构建] 开始逐层构造编码器")
+        print("="*50)
+
+    # def ok32432():
+        # 遍历每个分辨率层级
         for level, mult in enumerate(channel_mult):
+            print("\n" + "="*40)
+            print(f"▶ 层级 {level+1}/{len(channel_mult)} [通道倍数: ×{mult}]")
+            print(f"▷ 目标通道数: {mult * model_channels}")
+            print(f"▷ 本层残差块数: {self.num_res_blocks[level]}")
+
+            # 构建当前层级的残差块
             for nr in range(self.num_res_blocks[level]):
-                layers = [
-                    ResBlock(
-                        ch,
-                        time_embed_dim,
-                        dropout,
-                        out_channels=mult * model_channels,
-                        dims=dims,
-                        use_checkpoint=use_checkpoint,
-                        use_scale_shift_norm=use_scale_shift_norm,
-                    )
-                ]
+                print("\n" + "-"*30)
+                print(f"● 残差块 {nr+1}/{self.num_res_blocks[level]}")
+                print(f"│ 输入通道: {ch} → 输出通道: {mult * model_channels}")
+                print(f"│ 使用checkpoint: {'✓' if use_checkpoint else '✗'}")
+                print(f"└─ scale_shift_norm: {'✓' if use_scale_shift_norm else '✗'}")
+
+                # 构建残差块
+                res_block = ResBlock(
+                    ch, 
+                    time_embed_dim,
+                    dropout,
+                    out_channels=mult * model_channels,
+                    dims=dims,
+                    use_checkpoint=use_checkpoint,
+                    use_scale_shift_norm=use_scale_shift_norm,
+                )
+                layers = [res_block]
+                
+                # 更新通道数
+                prev_ch = ch
                 ch = mult * model_channels
+                print(f"\n✓ 残差块构建完成")
+                print(f"│ 原通道数: {prev_ch}")
+                print(f"└─ 新通道数: {ch}")
+
+            #  def ok324324():
+                print("\n" + "-"*40)
+                print(f"▷ 当前下采样率: {ds}x")
+                print(f"▷ 注意力分辨率列表: {attention_resolutions}")
+
+                # 更新通道数
+                prev_ch = ch
+                ch = mult * model_channels
+                print(f"\n● 通道数更新: {prev_ch} → {ch} (倍数: {mult}x)")
+
                 if ds in attention_resolutions:
+                    print("\n[注意力机制] 配置注意力头参数：")
+                    print(f"✓ 当前下采样率 {ds}x 在注意力分辨率列表中")
+
+                    # 头数计算逻辑
                     if num_head_channels == -1:
                         dim_head = ch // num_heads
+                        print(f"│ 模式: 固定头数 | 头数={num_heads}")
+                        print(f"│ 计算得头维度: {dim_head} = {ch} // {num_heads}")
                     else:
                         num_heads = ch // num_head_channels
                         dim_head = num_head_channels
+                        print(f"│ 模式: 固定头维度 | 头维度={num_head_channels}")
+                        print(f"│ 计算得头数: {num_heads} = {ch} // {num_head_channels}")
+
+                    # 传统模式处理
                     if legacy:
-                        #num_heads = 1
-                        dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
-                    if exists(disable_self_attentions):
-                        disabled_sa = disable_self_attentions[level]
-                    else:
-                        disabled_sa = False
+                        legacy_note = "传统模式覆盖: "
+                        if use_spatial_transformer:
+                            dim_head = ch // num_heads
+                            legacy_note += f"空间变换器 → 头维度={dim_head}"
+                        else:
+                            dim_head = num_head_channels
+                            legacy_note += f"常规注意力 → 头维度={dim_head}"
+                        print(f"│ {legacy_note}")
 
+                    # 自注意力禁用判断
+                    disabled_sa = disable_self_attentions[level] if exists(disable_self_attentions) else False
+                    sa_status = "禁用" if disabled_sa else "启用"
+                    print(f"└─ 自注意力状态: {sa_status} (层级 {level+1})")
+
+                    # 添加注意力模块
                     if not exists(num_attention_blocks) or nr < num_attention_blocks[level]:
-                        layers.append(
-                            AttentionBlock(
-                                ch,
-                                use_checkpoint=use_checkpoint,
-                                num_heads=num_heads,
-                                num_head_channels=dim_head,
-                                use_new_attention_order=use_new_attention_order,
-                            ) if not use_spatial_transformer else SpatialTransformer(
-                                ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
-                                disable_self_attn=disabled_sa, use_linear=use_linear_in_transformer,
-                                use_checkpoint=use_checkpoint
+                        print("\n[模块添加] 正在构建注意力层：")
+                        if use_spatial_transformer:
+                            print(f"▷ 空间变换器 | 上下文维度={context_dim}")
+                            print(f"▷ 线性投影: {'✓' if use_linear_in_transformer else '✗'}")
+                            transformer = SpatialTransformer(
+                                ch, num_heads, dim_head, depth=transformer_depth,
+                                context_dim=context_dim, disable_self_attn=disabled_sa,
+                                use_linear=use_linear_in_transformer, use_checkpoint=use_checkpoint
                             )
-                        )
-                self.input_blocks.append(TimestepEmbedSequential(*layers))
-                self._feature_size += ch
-                input_block_chans.append(ch)
-            if level != len(channel_mult) - 1:
-                out_ch = ch
-                self.input_blocks.append(
-                    TimestepEmbedSequential(
-                        ResBlock(
-                            ch,
-                            time_embed_dim,
-                            dropout,
-                            out_channels=out_ch,
-                            dims=dims,
-                            use_checkpoint=use_checkpoint,
-                            use_scale_shift_norm=use_scale_shift_norm,
-                            down=True,
-                        )
-                        if resblock_updown
-                        else Downsample(
-                            ch, conv_resample, dims=dims, out_channels=out_ch
-                        )
-                    )
-                )
-                ch = out_ch
-                input_block_chans.append(ch)
-                ds *= 2
-                self._feature_size += ch
+                            print(f"✓ 创建 {transformer.__class__.__name__}")
+                        else:
+                            print("▷ 常规注意力块")
+                            print(f"▷ 新注意力顺序: {'✓' if use_new_attention_order else '✗'}")
+                            attention = AttentionBlock(
+                                ch, use_checkpoint=use_checkpoint,
+                                num_heads=num_heads, num_head_channels=dim_head,
+                                use_new_attention_order=use_new_attention_order
+                            )
+                            print(f"✓ 创建 {attention.__class__.__name__}")
 
+                        layers.append(transformer if use_spatial_transformer else attention)
+                        print(f"└─ 已添加注意力模块 (当前层数: {len(layers)})")
+
+                # 添加模块并更新跟踪器
+                print("\n[网络结构] 更新输入块：")
+                self.input_blocks.append(TimestepEmbedSequential(*layers))
+                print(f"▷ 新增模块包含 {len(layers)} 个子层")
+                print(f"▷ 当前输入块数: {len(self.input_blocks)}")
+
+                self._feature_size += ch
+                print(f"│ 累计特征尺寸: {self._feature_size}")
+
+                input_block_chans.append(ch)
+                print(f"└─ 更新通道序列: {input_block_chans}")
+        # def ok2342():
+            # 下采样条件检查
+            print("\n" + "="*40)
+            print(f"▷ 检查层级 {level+1}/{len(channel_mult)} 是否需要下采样")
+            if level != len(channel_mult) - 1:
+                print("✓ 非最后层级，添加下采样模块")
+                
+                # 下采样类型选择
+                down_type = "ResBlock下采样" if resblock_updown else "常规下采样"
+                print(f"▷ 下采样类型: {down_type}")
+                print(f"▷ 输入通道: {ch} → 输出通道: {ch} (保持相同)")
+                
+                # 构建下采样模块
+                down_module = None
+                if resblock_updown:
+                    print("│ 使用带有下采样的残差块:")
+                    print(f"│ • 时间嵌入维度: {time_embed_dim}")
+                    print(f"│ • 使用checkpoint: {'✓' if use_checkpoint else '✗'}")
+                    print(f"└─ • scale_shift归一化: {'✓' if use_scale_shift_norm else '✗'}")
+                    down_module = ResBlock(
+                        ch, time_embed_dim, dropout,
+                        out_channels=ch,  # 保持相同通道
+                        dims=dims,
+                        use_checkpoint=use_checkpoint,
+                        use_scale_shift_norm=use_scale_shift_norm,
+                        down=True
+                    )
+                else:
+                    print("│ 使用常规下采样层:")
+                    print(f"│ • 卷积重采样类型: {conv_resample}")
+                    print(f"└─ • 输出通道: {ch}")
+                    down_module = Downsample(ch, conv_resample, dims=dims, out_channels=ch)
+                
+                # 添加模块到输入块
+                print("\n[模块添加] 正在添加下采样层：")
+                self.input_blocks.append(TimestepEmbedSequential(down_module))
+                print(f"✓ 已添加 {down_module.__class__.__name__}")
+                print(f"│ 当前输入块总数: {len(self.input_blocks)}")
+                
+                # 更新跟踪变量
+                prev_ch = ch
+                ch = ch  # 此处保持相同（实际可能根据Downsample实现变化）
+                input_block_chans.append(ch)
+                print(f"│ 通道数保持: {prev_ch} → {ch}") 
+                
+                prev_ds = ds
+                ds *= 2
+                print(f"│ 下采样率更新: {prev_ds}x → {ds}x")
+                
+                prev_feature_size = self._feature_size
+                self._feature_size += ch
+                print(f"└─ 累计特征尺寸: {prev_feature_size} + {ch} = {self._feature_size}")
+            else:
+                print("✗ 最后层级，跳过下采样")
+
+    # def ok23432():
+        print("\n" + "="*40)
+        print("[注意力头配置] 开始计算注意力头参数")
+        print(f"▷ 输入通道数(ch): {ch}")
+        print(f"▷ 初始头数(num_heads): {num_heads}")
+        print(f"▷ 头通道数(num_head_channels): {num_head_channels}")
+        print(f"▷ Legacy模式: {'启用' if legacy else '禁用'}")
+        print(f"▷ 空间变换器: {'使用' if use_spatial_transformer else '未使用'}")
+
+        # 模式选择分支
         if num_head_channels == -1:
+            print("\n● 模式：固定头数 → 计算头维度")
             dim_head = ch // num_heads
+            print(f"│ 计算式：dim_head = {ch} // {num_heads}")
+            print(f"└─ 头维度: {dim_head} (头数保持 {num_heads})")
         else:
+            print("\n● 模式：固定头维度 → 计算头数")
             num_heads = ch // num_head_channels
             dim_head = num_head_channels
+            print(f"│ 计算式：num_heads = {ch} // {num_head_channels}")
+            print(f"└─ 头数: {num_heads} (头维度保持 {dim_head})")
+
+        # Legacy模式覆盖
         if legacy:
-            #num_heads = 1
-            dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
+            print("\n⚠️ Legacy模式参数调整：")
+            original_dim_head = dim_head
+            if use_spatial_transformer:
+                dim_head = ch // num_heads
+                print(f"│ 空间变换器模式 → dim_head = {ch} // {num_heads} = {dim_head}")
+            else:
+                dim_head = num_head_channels
+                print(f"│ 常规注意力模式 → 维持头维度: {dim_head}")
+            print(f"└─ 维度调整：{original_dim_head} → {dim_head}")
+
+        print("\n最终配置：")
+        print(f"num_heads: {num_heads}")
+        print(f"dim_head: {dim_head}")
+        print("="*40)
+
+    
         self.middle_block = TimestepEmbedSequential(
             ResBlock(
                 ch,
