@@ -481,47 +481,124 @@ class UNetModel(nn.Module):
         use_linear_in_transformer=False,
         adm_in_channels=None,
     ):
+    # def ok234324():
+        print("\n[模型初始化] 开始构建网络结构...")
         super().__init__()
+        print("[父类初始化] 已完成基类构造")
+
+        # 空间变换器与上下文维度交叉验证
+        print("[参数检查] 验证 spatial_transformer 与 context_dim 的依赖关系...")
         if use_spatial_transformer:
-            assert context_dim is not None, 'Fool!! You forgot to include the dimension of your cross-attention conditioning...'
-
+            assert_msg = "❌ 未设置 context_dim 但启用了空间变换器（需要交叉注意力机制）"
+            assert context_dim is not None, assert_msg
+            print("✓ 空间变换器启用 | context_dim =", context_dim)
+        
         if context_dim is not None:
-            assert use_spatial_transformer, 'Fool!! You forgot to use the spatial transformer for your cross-attention conditioning...'
+            assert_msg = "❌ 配置了 context_dim 但未启用空间变换器"
+            assert use_spatial_transformer, assert_msg
+            print("✓ 上下文维度验证通过 | 使用空间变换器进行交叉注意力")
+            
+            # 处理OmegaConf列表类型转换
             from omegaconf.listconfig import ListConfig
-            if type(context_dim) == ListConfig:
+            if isinstance(context_dim, ListConfig):
+                print("▷ 检测到 context_dim 为 OmegaConf 列表类型，正在转换为 Python list...")
                 context_dim = list(context_dim)
+                print("✓ 类型转换完成 | context_dim 类型:", type(context_dim).__name__)
 
+        # 注意力头数配置逻辑
+        print("\n[注意力机制] 配置多头注意力参数...")
         if num_heads_upsample == -1:
+            print(f"▷ num_heads_upsample(-1) 使用默认值 num_heads({num_heads})")
             num_heads_upsample = num_heads
-
+            print(f"✓ 最终值 num_heads_upsample = {num_heads_upsample}")
+        
+        head_check_flag = False
         if num_heads == -1:
-            assert num_head_channels != -1, 'Either num_heads or num_head_channels has to be set'
-
+            assert_msg = "❌ 必须设置 num_heads 或 num_head_channels 至少一个"
+            assert num_head_channels != -1, assert_msg
+            print("✓ 头数验证通过 | 使用 num_head_channels =", num_head_channels)
+            head_check_flag = True
+            
         if num_head_channels == -1:
-            assert num_heads != -1, 'Either num_heads or num_head_channels has to be set'
+            assert_msg = "❌ 必须设置 num_heads 或 num_head_channels 至少一个"
+            assert num_heads != -1, assert_msg
+            print("✓ 头数验证通过 | 使用 num_heads =", num_heads)
+            head_check_flag = True
+            
+        if not head_check_flag:
+            print("⚠️ 注意：同时指定了 num_heads 和 num_head_channels，优先使用 num_head_channels")
 
-        self.image_size = image_size
-        self.in_channels = in_channels
-        self.model_channels = model_channels
-        self.out_channels = out_channels
+        # 核心参数初始化
+        print("\n[参数初始化] 设置网络基础参数...")
+        param_config = {
+            "image_size": image_size,
+            "in_channels": in_channels,
+            "model_channels": model_channels,
+            "out_channels": out_channels
+        }
+        for k, v in param_config.items():
+            print(f"▷ 设置 {k.ljust(15)} = {v}")
+            setattr(self, k, v)
+
+        # 残差块配置逻辑
+        print("\n[残差块] 配置各层残差块数量...")
         if isinstance(num_res_blocks, int):
+            print(f"▷ 扩展全局残差块数({num_res_blocks})到各分辨率层级...")
             self.num_res_blocks = len(channel_mult) * [num_res_blocks]
+            print(f"✓ 生成列表: num_res_blocks = {self.num_res_blocks}")
         else:
+            print("▷ 使用自定义层级残差块配置:", num_res_blocks)
             if len(num_res_blocks) != len(channel_mult):
-                raise ValueError("provide num_res_blocks either as an int (globally constant) or "
-                                 "as a list/tuple (per-level) with the same length as channel_mult")
+                err_msg = (f"❌ 残差块配置维度不匹配 | "
+                         f"num_res_blocks长度({len(num_res_blocks)}) ≠ channel_mult长度({len(channel_mult)})")
+                raise ValueError(err_msg)
             self.num_res_blocks = num_res_blocks
-        if disable_self_attentions is not None:
-            # should be a list of booleans, indicating whether to disable self-attention in TransformerBlocks or not
-            assert len(disable_self_attentions) == len(channel_mult)
-        if num_attention_blocks is not None:
-            assert len(num_attention_blocks) == len(self.num_res_blocks)
-            assert all(map(lambda i: self.num_res_blocks[i] >= num_attention_blocks[i], range(len(num_attention_blocks))))
-            print(f"Constructor of UNetModel received num_attention_blocks={num_attention_blocks}. "
-                  f"This option has LESS priority than attention_resolutions {attention_resolutions}, "
-                  f"i.e., in cases where num_attention_blocks[i] > 0 but 2**i not in attention_resolutions, "
-                  f"attention will still not be set.")
+            print("✓ 残差块配置验证通过")
 
+    #  def ok2423():
+        print("\n" + "="*50)
+        print("[UNet初始化] 开始构建UNet模型结构")
+        print("="*50)
+
+        # 自注意力禁用配置验证
+        if disable_self_attentions is not None:
+            print("\n[自注意力配置] 验证禁用层配置...")
+            expected_len = len(channel_mult)
+            actual_len = len(disable_self_attentions)
+            assert actual_len == expected_len, (
+                f"❌ 禁用自注意力配置维度不匹配 | "
+                f"channel_mult长度({expected_len}) ≠ disable_self_attentions长度({actual_len})"
+            )
+            print(f"✓ 禁用配置验证通过 | 各层级禁用状态：{disable_self_attentions}")
+
+        # 注意力块数量验证
+        if num_attention_blocks is not None:
+            print("\n[注意力块] 验证注意力块配置...")
+            res_blocks_len = len(self.num_res_blocks)
+            attn_blocks_len = len(num_attention_blocks)
+            
+            # 维度匹配验证
+            assert attn_blocks_len == res_blocks_len, (
+                f"❌ 注意力块维度不匹配 | "
+                f"残差块数({res_blocks_len}) ≠ 注意力块数({attn_blocks_len})"
+            )
+            
+            # 数量合理性验证
+            invalid_blocks = [i for i in range(attn_blocks_len) if self.num_res_blocks[i] < num_attention_blocks[i]]
+            assert not invalid_blocks, (
+                f"❌ 注意力块数量超过残差块 | "
+                f"非法层级索引：{invalid_blocks}"
+            )
+            
+            warning_msg = (
+                f"▷ 注意：num_attention_blocks({num_attention_blocks})的优先级低于attention_resolutions({attention_resolutions})\n"
+                f"▷ 即当num_attention_blocks[i]>0但2**i不在attention_resolutions时，仍不会设置注意力"
+            )
+            print(warning_msg)
+            print("✓ 注意力块配置验证通过")
+
+        # 基础参数初始化
+        print("\n[核心参数] 设置模型基础配置：")
         self.attention_resolutions = attention_resolutions
         self.dropout = dropout
         self.channel_mult = channel_mult
@@ -534,22 +611,62 @@ class UNetModel(nn.Module):
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
+        base_params = {
+            "attention_resolutions": attention_resolutions,
+            "dropout": dropout,
+            "channel_mult": channel_mult,
+            "conv_resample": conv_resample,
+            "num_classes": num_classes,
+            "use_checkpoint": use_checkpoint,
+            "num_heads": num_heads,
+            "num_head_channels": num_head_channels,
+            "num_heads_upsample": num_heads_upsample,
+            "predict_codebook_ids": n_embed is not None
+        }
+        for param, value in base_params.items():
+            print(f"│ {param.ljust(25)} = {str(value).ljust(30)}")
+        
+        # 数据类型配置
+        dtype_stack = []
+        if use_fp16:
+            dtype_stack.append("float16")
+        if use_bf16:
+            dtype_stack.append("bfloat16")
+        final_dtype = th.float32
+        if use_fp16:
+            final_dtype = th.float16
+        if use_bf16:
+            final_dtype = th.bfloat16
+        print(f"└─ dtype {' ← '.join(dtype_stack)} ⇒ {str(final_dtype)}")
+        self.dtype = final_dtype
 
+        # 时间嵌入层构建
+        print("\n[时间嵌入] 构建时间编码模块：")
         time_embed_dim = model_channels * 4
+        print(f"▷ 输入维度: {model_channels} → 中间维度: {time_embed_dim}")
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
             nn.SiLU(),
             linear(time_embed_dim, time_embed_dim),
         )
+        print(f"✓ 时间编码器结构: {self.time_embed}")
 
+        # 类别条件处理
         if self.num_classes is not None:
+            print("\n[类别条件] 配置条件嵌入层：")
             if isinstance(self.num_classes, int):
+                print(f"▷ 离散类别嵌入 (num_classes={self.num_classes})")
                 self.label_emb = nn.Embedding(num_classes, time_embed_dim)
+                print(f"✓ 嵌入层维度: ({num_classes}, {time_embed_dim})")
+            
             elif self.num_classes == "continuous":
-                print("setting up linear c_adm embedding layer")
+                print("▷ 连续值条件处理 → 线性投影层")
                 self.label_emb = nn.Linear(1, time_embed_dim)
+                print(f"✓ 线性层: 1 → {time_embed_dim}")
+            
             elif self.num_classes == "sequential":
-                assert adm_in_channels is not None
+                print("▷ 序列输入条件处理 → 多层投影")
+                assert adm_in_channels is not None, "❌ 序列条件需要 adm_in_channels 参数"
                 self.label_emb = nn.Sequential(
                     nn.Sequential(
                         linear(adm_in_channels, time_embed_dim),
@@ -557,8 +674,12 @@ class UNetModel(nn.Module):
                         linear(time_embed_dim, time_embed_dim),
                     )
                 )
+                print(f"✓ 投影网络结构: {self.label_emb}")
+            
             else:
-                raise ValueError()
+                raise ValueError(f"❌ 无效的num_classes类型: {type(self.num_classes)}")
+
+
 
         self.input_blocks = nn.ModuleList(
             [

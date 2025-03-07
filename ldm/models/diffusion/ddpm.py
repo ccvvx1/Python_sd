@@ -534,50 +534,138 @@ class LatentDiffusion(DDPM):
                  scale_by_std=False,
                  force_null_conditioning=False,
                  *args, **kwargs):
+    #  def ok23432():
+        print("\n🔥 开始模型初始化流程")
+        
+        # 参数初始化跟踪
+        print("[1/8] ⚙️ 初始化核心参数")
         self.force_null_conditioning = force_null_conditioning
+        print(f"   force_null_conditioning = {force_null_conditioning}")
+        
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
+        print(f"   num_timesteps_cond = {self.num_timesteps_cond} (默认值: {num_timesteps_cond is None})")
+        
         self.scale_by_std = scale_by_std
-        assert self.num_timesteps_cond <= kwargs['timesteps']
-        # for backwards compatibility after implementation of DiffusionWrapper
+        print(f"   scale_by_std = {scale_by_std}")
+
+        # 条件系统验证
+        print("\n[2/8] 🔍 条件系统配置验证")
+        try:
+            assert self.num_timesteps_cond <= kwargs['timesteps']
+            print(f"   ✅ 时间步验证通过: {self.num_timesteps_cond} <= {kwargs['timesteps']}")
+        except AssertionError:
+            print(f"   ❌ 时间步验证失败: {self.num_timesteps_cond} > {kwargs['timesteps']}")
+            raise
+
+        # 向后兼容处理
+        print("\n[3/8] 🔄 旧版兼容处理")
+        print(f"   原始conditioning_key = {conditioning_key}")
         if conditioning_key is None:
-            conditioning_key = 'concat' if concat_mode else 'crossattn'
-        if cond_stage_config == '__is_unconditional__' and not self.force_null_conditioning:
-            conditioning_key = None
+            new_key = 'concat' if concat_mode else 'crossattn'
+            print(f"   自动设置conditioning_key为: {new_key} (concat_mode={concat_mode})")
+            conditioning_key = new_key
+        
+        # 无条件模型处理
+        print("\n[4/8] 🚫 无条件模型配置")
+        if cond_stage_config == '__is_unconditional__':
+            print(f"   检测到无条件配置且force_null_conditioning=False")
+            if not self.force_null_conditioning:
+                print("   ➡️ 强制设置conditioning_key为None")
+                conditioning_key = None
+
+        # 检查点处理
+        print("\n[5/8] 📦 检查点配置")
         ckpt_path = kwargs.pop("ckpt_path", None)
+        print(f"   检查点路径: {ckpt_path or '未提供'}")
         reset_ema = kwargs.pop("reset_ema", False)
         reset_num_ema_updates = kwargs.pop("reset_num_ema_updates", False)
+        reset_params = {
+            'reset_ema': kwargs.pop("reset_ema", False),
+            'reset_num_ema_updates': kwargs.pop("reset_num_ema_updates", False)
+        }
+        print(f"   重置参数: EMA={reset_params['reset_ema']}, EMA更新计数={reset_params['reset_num_ema_updates']}")
+        
         ignore_keys = kwargs.pop("ignore_keys", [])
+        print(f"   忽略的键: {ignore_keys[:3]}...共{len(ignore_keys)}项" if ignore_keys else "无忽略键")
+
+        # 父类初始化
+        print("\n[6/8] 👪 调用父类初始化")
+        print(f"   最终conditioning_key = {conditioning_key}")
         super().__init__(conditioning_key=conditioning_key, *args, **kwargs)
+        print("   父类初始化完成")
+
+        # 阶段配置
+        print("\n[7/8] 🧩 模型阶段配置")
         self.concat_mode = concat_mode
         self.cond_stage_trainable = cond_stage_trainable
         self.cond_stage_key = cond_stage_key
+        print(f"   concat_mode = {concat_mode}")
+        print(f"   cond_stage_trainable = {cond_stage_trainable}")
+        print(f"   cond_stage_key = {cond_stage_key}")
+
+        # 下采样层数检测
         try:
+            print("\n[8/8] ⬇️ 计算下采样层数")
             self.num_downs = len(first_stage_config.params.ddconfig.ch_mult) - 1
-        except:
+            print(f"   从配置检测到num_downs = {self.num_downs}")
+        except Exception as e:
+            print(f"   ❗ 无法自动检测num_downs: {str(e)}")
             self.num_downs = 0
+            print(f"   回退到默认num_downs = 0")
+
+        # 缩放因子处理
+        print("\n[9/8] ⚖️ 缩放因子配置")
         if not scale_by_std:
             self.scale_factor = scale_factor
+            print(f"   直接设置scale_factor = {scale_factor}")
         else:
             self.register_buffer('scale_factor', torch.tensor(scale_factor))
+            print(f"   注册缓冲器scale_factor = {scale_factor} (张量形式)")
+
+        # 模型初始化
+        print("\n[10/8] 🏗️ 初始化第一阶段模型")
         self.instantiate_first_stage(first_stage_config)
+        print(f"   第一阶段模型类型: {type(self.first_stage_model).__name__}")
+
+        print("\n[11/8] 🧠 初始化条件阶段模型")
         self.instantiate_cond_stage(cond_stage_config)
+        print(f"   条件阶段模型类型: {type(self.cond_stage_model).__name__ if hasattr(self, 'cond_stage_model') else 'None'}")
+
+        # 其他配置
+        print("\n[12/8] ⚡ 最终参数设置")
         self.cond_stage_forward = cond_stage_forward
         self.clip_denoised = False
         self.bbox_tokenizer = None
+        print(f"   cond_stage_forward = {cond_stage_forward}")
+        print(f"   clip_denoised = {self.clip_denoised}")
+        print(f"   bbox_tokenizer = {self.bbox_tokenizer is not None}")
 
+    # def ok23424():
+        print("[模型恢复] 初始化检查点恢复状态...")
         self.restarted_from_ckpt = False
+        
         if ckpt_path is not None:
+            print(f"[检查点加载] 检测到检查点路径: {ckpt_path} | 开始加载...")
             self.init_from_ckpt(ckpt_path, ignore_keys)
+            
             self.restarted_from_ckpt = True
+            print(f"[状态更新] 设置 restarted_from_ckpt = {self.restarted_from_ckpt}")
+            
             if reset_ema:
-                assert self.use_ema
-                print(
-                    f"Resetting ema to pure model weights. This is useful when restoring from an ema-only checkpoint.")
+                print("[EMA控制] 尝试重置EMA模型参数...")
+                assert self.use_ema, "EMA未启用但要求重置EMA参数"
+                print("▷ 正在将EMA模型权重重置为原始模型权重（适用于从纯EMA检查点恢复的场景）")
                 self.model_ema = LitEma(self.model)
+                print("✓ EMA模型已重新初始化")
+
         if reset_num_ema_updates:
-            print(" +++++++++++ WARNING: RESETTING NUM_EMA UPDATES TO ZERO +++++++++++ ")
-            assert self.use_ema
+            print("\n[!] 重要警告：正在重置EMA更新计数器 [!]")
+            print("[!] +++++++++++ WARNING: RESETTING NUM_EMA UPDATES TO ZERO +++++++++++ ")
+            assert self.use_ema, "EMA未启用但要求重置更新次数"
             self.model_ema.reset_num_updates()
+            print(f"[EMA状态] 已重置更新次数 | 当前计数器：{self.model_ema.num_updates}")
+
+
 
     def make_cond_schedule(self, ):
         self.cond_ids = torch.full(size=(self.num_timesteps,), fill_value=self.num_timesteps - 1, dtype=torch.long)
@@ -835,14 +923,45 @@ class LatentDiffusion(DDPM):
         return loss
 
     def forward(self, x, c, *args, **kwargs):
+        print("\n⏳ 开始时间步采样与条件处理")
+        
+        # 时间步采样信息
+        print("[1/4] 🎲 生成随机时间步")
         t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
+        print(f"   采样形状: {t.shape} | 设备: {t.device}")
+        print(f"   时间步范围: {t.min().item()} \~ {t.max().item()}")
+        print(f"   示例值: {t[:3].cpu().numpy()}")
+
+        # 条件系统检查
+        print("\n[2/4] 🔗 条件处理流程")
         if self.model.conditioning_key is not None:
-            assert c is not None
+            print(f"   检测到条件键: {self.model.conditioning_key}")
+            assert c is not None, f"条件输入c不能为None (conditioning_key={self.model.conditioning_key})"
+            print(f"   输入条件c形状: {c.shape if hasattr(c, 'shape') else 'N/A'}")
+
             if self.cond_stage_trainable:
+                print("   🎓 可训练条件阶段 - 进行条件编码")
+                orig_device = c.device if hasattr(c, 'device') else 'cpu'
                 c = self.get_learned_conditioning(c)
-            if self.shorten_cond_schedule:  # TODO: drop this option
+                print(f"   编码后条件形状: {c.shape} | 设备迁移: {orig_device} → {c.device}")
+            else:
+                print("   ⏩ 跳过条件编码 (cond_stage_trainable=False)")
+
+            if self.shorten_cond_schedule:
+                print("\n[3/4] ⚡ 条件调度压缩")
+                print(f"   原始条件形状: {c.shape}")
                 tc = self.cond_ids[t].to(self.device)
-                c = self.q_sample(x_start=c, t=tc, noise=torch.randn_like(c.float()))
+                print(f"   条件时间步形状: {tc.shape} | 示例值: {tc[:3].cpu().numpy()}")
+
+                noise = torch.randn_like(c.float())
+                print(f"   噪声统计 - 均值: {noise.mean().item():.3f} 标准差: {noise.std().item():.3f}")
+
+                c = self.q_sample(x_start=c, t=tc, noise=noise)
+                print(f"   加噪后条件形状: {c.shape}")
+            else:
+                print("\n[3/4] ⏭️ 跳过条件调度压缩 (shorten_cond_schedule=False)")
+
+
         return self.p_losses(x, c, t, *args, **kwargs)
 
     def apply_model(self, x_noisy, t, cond, return_ids=False):
