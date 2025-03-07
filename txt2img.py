@@ -1,4 +1,5 @@
 import argparse, os
+os.environ.pop("MPLBACKEND", None) 
 import cv2
 import torch
 import numpy as np

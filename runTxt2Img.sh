@@ -1,1 +1,2 @@
+source /content/Python_sd_web/venv/bin/activate
 python txt2img.py --prompt "a professional photograph of an astronaut riding a horse" --ckpt /content/Python_sd_web/repositories/stable-diffusion-stability-ai/v2-1_768-nonema-pruned.ckpt --config configs/stable-diffusion/v2-inference-v.yaml --H 768 --W 768  
