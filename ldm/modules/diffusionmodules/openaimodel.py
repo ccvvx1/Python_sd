@@ -902,27 +902,86 @@ class UNetModel(nn.Module):
         :param y: an [N] Tensor of labels, if class-conditional.
         :return: an [N x C x ...] Tensor of outputs.
         """
-        assert (y is not None) == (
-            self.num_classes is not None
-        ), "must specify y if and only if the model is class-conditional"
-        hs = []
+    #  def ok324():
+        print("\n" + "="*50)
+        print("[前向传播] 开始执行UNet前向计算")
+        print("="*50)
+
+        # 条件一致性验证
+        print("\n[条件验证] 检查类别条件一致性...")
+        condition_check = (y is not None) == (self.num_classes is not None)
+        assert condition_check, (
+            f"❌ 条件不匹配 | y存在({y is not None}) ⇄ 模型类别条件({self.num_classes is not None})"
+        )
+        print(f"✓ 条件验证通过 | 使用类别条件: {self.num_classes is not None}")
+
+        # 时间嵌入计算
+        print("\n[时间嵌入] 生成时间步编码：")
+        print(f"▷ 输入 timesteps 形状: {timesteps.shape}")
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+        print(f"│ 基础编码形状: {t_emb.shape}")
         emb = self.time_embed(t_emb)
+        print(f"└─ 投影后嵌入形状: {emb.shape}")
 
+        # 类别条件融合
         if self.num_classes is not None:
-            assert y.shape[0] == x.shape[0]
-            emb = emb + self.label_emb(y)
+            print("\n[类别融合] 合并类别条件信息：")
+            print(f"▷ 输入标签 y 形状: {y.shape}")
+            assert y.shape[0] == x.shape[0], (
+                f"❌ Batch大小不匹配 | x({x.shape[0]}) ≠ y({y.shape[0]})"
+            )
+            print(f"✓ Batch大小验证通过: {x.shape[0]}")
+            emb += self.label_emb(y)
+            print(f"└─ 融合后嵌入形状: {emb.shape}")
 
+        # 输入处理
+        print("\n" + "-"*40)
+        print("[编码阶段] 执行输入块处理：")
         h = x.type(self.dtype)
-        for module in self.input_blocks:
+        print(f"▷ 初始输入形状: {h.shape} | dtype: {h.dtype}")
+        
+        hs = []
+        for idx, module in enumerate(self.input_blocks):
+            print(f"\n● 输入块 {idx+1}/{len(self.input_blocks)}")
             h = module(h, emb, context)
+            print(f"│ 输出形状: {h.shape}")
             hs.append(h)
+            print(f"└─ 特征图缓存数: {len(hs)}")
+
+        # 中间处理
+        print("\n" + "-"*40)
+        print("[中间层] 执行中间块处理：")
         h = self.middle_block(h, emb, context)
-        for module in self.output_blocks:
-            h = th.cat([h, hs.pop()], dim=1)
+        print(f"└─ 中间输出形状: {h.shape}")
+
+        # 解码阶段
+        print("\n" + "-"*40)
+        print("[解码阶段] 执行输出块处理：")
+        for idx, module in enumerate(self.output_blocks):
+            print(f"\n● 输出块 {idx+1}/{len(self.output_blocks)}")
+            print(f"▷ 当前特征形状: {h.shape}")
+            skip_conn = hs.pop()
+            print(f"│ 取出跳连特征: {skip_conn.shape} (剩余缓存: {len(hs)})")
+            h = th.cat([h, skip_conn], dim=1)
+            print(f"│ 拼接后形状: {h.shape}")
             h = module(h, emb, context)
+            print(f"└─ 处理输出形状: {h.shape}")
+
+        # 最终输出
+        print("\n" + "-"*40)
+        print("[输出转换] 生成最终结果：")
         h = h.type(x.dtype)
+        print(f"▷ 恢复原始dtype: {h.dtype}")
+        
         if self.predict_codebook_ids:
-            return self.id_predictor(h)
+            print("→ 使用codebook预测路径")
+            output = self.id_predictor(h)
         else:
-            return self.out(h)
+            print("→ 使用常规输出路径")
+            output = self.out(h)
+        
+        print(f"\n[最终输出] 形状: {output.shape}")
+        print("="*50)
+        print("[前向传播] 计算完成\n")
+        return output
+
