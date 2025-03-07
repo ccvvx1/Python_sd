@@ -1095,37 +1095,116 @@ class UNetModel(nn.Module):
                 print(f"最终通道数: {ch}")
                 print("="*60 + "\n")
 
-                if level and i == self.num_res_blocks[level]:
-                    out_ch = ch
-                    layers.append(
-                        ResBlock(
-                            ch,
-                            time_embed_dim,
-                            dropout,
-                            out_channels=out_ch,
+            # def okw32432():
+                print("\n" + "="*60)
+                print(f"▷ 检查上采样条件 (层级 {level} 第{i+1}/{self.num_res_blocks[level]}块)")
+                
+                # 上采样条件判断
+                condition_met = level and i == self.num_res_blocks[level]
+                print(f"│ 条件: level存在({bool(level)}) 且 i({i}) == 本层残差块数({self.num_res_blocks[level]})")
+                print(f"└─ 触发上采样: {'✓' if condition_met else '✗'}")
+
+                if condition_met:
+                    print("\n● 上采样模块配置")
+                    print(f"▷ 输入/输出通道: {ch} (保持相同)")
+                    print(f"│ 上采样类型: {'ResBlock上采样' if resblock_updown else '常规上采样'}")
+                    
+                    # 构建上采样模块
+                    if resblock_updown:
+                        print("│ 使用带有上采样的残差块:")
+                        print(f"│ • 时间嵌入维度: {time_embed_dim}")
+                        print(f"│ • 使用checkpoint: {'✓' if use_checkpoint else '✗'}")
+                        print(f"└─ • scale_shift归一化: {'✓' if use_scale_shift_norm else '✗'}")
+                        up_layer = ResBlock(
+                            ch, time_embed_dim, dropout,
+                            out_channels=ch,  # 保持相同通道
                             dims=dims,
                             use_checkpoint=use_checkpoint,
                             use_scale_shift_norm=use_scale_shift_norm,
-                            up=True,
+                            up=True
                         )
-                        if resblock_updown
-                        else Upsample(ch, conv_resample, dims=dims, out_channels=out_ch)
-                    )
+                    else:
+                        print("│ 使用常规上采样层:")
+                        print(f"│ • 卷积重采样类型: {conv_resample}")
+                        print(f"└─ • 输出通道: {ch}")
+                        up_layer = Upsample(ch, conv_resample, dims=dims, out_channels=ch)
+                    
+                    # 添加模块并更新参数
+                    layers.append(up_layer)
+                    print(f"\n✓ 已添加 {up_layer.__class__.__name__}")
+                    
+                    # 更新下采样率
+                    prev_ds = ds
                     ds //= 2
+                    print(f"│ 下采样率更新: {prev_ds}x → {ds}x")
+                
+                # 添加输出块并更新特征尺寸
+                print("\n● 更新输出块:")
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
+                print(f"▷ 新增模块包含 {len(layers)} 个子层")
+                print(f"│ 当前输出块总数: {len(self.output_blocks)}")
+                
+                prev_feature_size = self._feature_size
                 self._feature_size += ch
+                print(f"└─ 累计特征尺寸: {prev_feature_size} + {ch} = {self._feature_size}")
+                print("="*60 + "\n")
 
-        self.out = nn.Sequential(
+
+    # def ok2432():
+        print("\n" + "="*60)
+        print("[输出层构建] 正在初始化最终输出模块")
+        print("="*60)
+
+        # 构建常规输出路径
+        print("\n● 常规输出路径配置:")
+        print(f"▷ 输入通道: {model_channels} → 输出通道: {out_channels}")
+        print(f"│ 卷积类型: {dims}D卷积 | 核尺寸: 3x3 | 填充: 1")
+        print(f"│ 使用zero_module: ✓ (权重初始化为零)")
+        
+        out_layers = [
             normalization(ch),
             nn.SiLU(),
-            zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
-        )
+            zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1))
+        ]
+        self.out = nn.Sequential(*out_layers)
+        
+        print("\n✓ 常规输出层结构:")
+        for i, layer in enumerate(self.out):
+            print(f"│ [{i+1}] {layer.__class__.__name__}")
+            if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Conv3d):
+                print(f"│     in_channels: {layer.in_channels}")
+                print(f"│     out_channels: {layer.out_channels}")
+                print(f"└──── kernel_size: {layer.kernel_size}")
+
+        # 构建codebook预测路径
         if self.predict_codebook_ids:
-            self.id_predictor = nn.Sequential(
-            normalization(ch),
-            conv_nd(dims, model_channels, n_embed, 1),
-            #nn.LogSoftmax(dim=1)  # change to cross_entropy and produce non-normalized logits
-        )
+            print("\n● Codebook预测路径配置:")
+            print(f"▷ 输入通道: {model_channels} → 输出类别数: {n_embed}")
+            print(f"│ 使用1x1卷积 → 空间维度压缩")
+            
+            id_layers = [
+                normalization(ch),
+                conv_nd(dims, model_channels, n_embed, 1)
+            ]
+            self.id_predictor = nn.Sequential(*id_layers)
+            
+            print("\n✓ Codebook预测层结构:")
+            for i, layer in enumerate(self.id_predictor):
+                print(f"│ [{i+1}] {layer.__class__.__name__}")
+                if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Conv3d):
+                    print(f"│     in_channels: {layer.in_channels}")
+                    print(f"│     out_channels: {layer.out_channels}")
+                    print(f"└──── kernel_size: {layer.kernel_size}")
+        else:
+            print("\n✗ 未启用Codebook预测路径")
+
+        print("\n" + "="*60)
+        print(f"最终输出配置完成")
+        print(f"• 常规输出shape: (B, {out_channels}, H, W)")
+        if self.predict_codebook_ids:
+            print(f"• Codebook预测shape: (B, {n_embed}, H, W)")
+        print("="*60 + "\n")
+
 
     def convert_to_fp16(self):
         """
